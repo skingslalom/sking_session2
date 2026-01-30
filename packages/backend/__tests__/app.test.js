@@ -1,102 +1,197 @@
 const request = require('supertest');
 const { app, db } = require('../src/app');
 
-// Close the database connection after all tests
-afterAll(() => {
-  if (db) {
+describe('Task API', () => {
+  beforeEach(() => {
+    // Clear the database before each test
+    db.exec('DELETE FROM items');
+  });
+
+  afterAll(() => {
+    // Close the database connection
     db.close();
-  }
-});
+  });
 
-// Test helpers
-const createItem = async (name = 'Temp Item to Delete') => {
-  const response = await request(app)
-    .post('/api/items')
-    .send({ name })
-    .set('Accept', 'application/json');
-
-  expect(response.status).toBe(201);
-  expect(response.body).toHaveProperty('id');
-  return response.body;
-};
-
-describe('API Endpoints', () => {
   describe('GET /api/items', () => {
-    it('should return all items', async () => {
+    it('should return an empty array when no items exist', async () => {
+      const response = await request(app).get('/api/items');
+      
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual([]);
+    });
+
+    it('should return items sorted by due date then creation date', async () => {
+      // Create test items
+      const insertStmt = db.prepare(`
+        INSERT INTO items (name, due_date, created_at) 
+        VALUES (?, ?, datetime('now', '-' || ? || ' minutes'))
+      `);
+
+      insertStmt.run('Task without due date', null, 5);
+      insertStmt.run('Task due tomorrow', '2026-02-01', 10);
+      insertStmt.run('Task due today', '2026-01-30', 15);
+
       const response = await request(app).get('/api/items');
 
       expect(response.status).toBe(200);
-      expect(Array.isArray(response.body)).toBe(true);
-      expect(response.body.length).toBeGreaterThan(0);
-
-      // Check if items have the expected structure
-      const item = response.body[0];
-      expect(item).toHaveProperty('id');
-      expect(item).toHaveProperty('name');
-      expect(item).toHaveProperty('created_at');
+      expect(response.body).toHaveLength(3);
+      expect(response.body[0].name).toBe('Task due today');
+      expect(response.body[1].name).toBe('Task due tomorrow');
+      expect(response.body[2].name).toBe('Task without due date');
     });
   });
 
   describe('POST /api/items', () => {
-    it('should create a new item', async () => {
-      const newItem = { name: 'Test Item' };
+    it('should create a new task with name only', async () => {
+      const taskData = { name: 'Test Task' };
+
       const response = await request(app)
         .post('/api/items')
-        .send(newItem)
-        .set('Accept', 'application/json');
+        .send(taskData);
 
       expect(response.status).toBe(201);
+      expect(response.body).toMatchObject({
+        name: 'Test Task',
+        status: 'pending',
+        priority: 0,
+      });
       expect(response.body).toHaveProperty('id');
-      expect(response.body.name).toBe(newItem.name);
       expect(response.body).toHaveProperty('created_at');
     });
 
-    it('should return 400 if name is missing', async () => {
+    it('should create a new task with all fields', async () => {
+      const taskData = {
+        name: 'Test Task with Due Date',
+        due_date: '2026-02-01T10:00:00.000Z',
+        status: 'in-progress',
+        priority: 2
+      };
+
       const response = await request(app)
         .post('/api/items')
-        .send({})
-        .set('Accept', 'application/json');
+        .send(taskData);
+
+      expect(response.status).toBe(201);
+      expect(response.body).toMatchObject(taskData);
+      expect(response.body).toHaveProperty('id');
+    });
+
+    it('should return 400 for empty task name', async () => {
+      const response = await request(app)
+        .post('/api/items')
+        .send({ name: '' });
 
       expect(response.status).toBe(400);
-      expect(response.body).toHaveProperty('error');
       expect(response.body.error).toBe('Item name is required');
     });
 
-    it('should return 400 if name is empty', async () => {
+    it('should return 400 for invalid due date', async () => {
       const response = await request(app)
         .post('/api/items')
-        .send({ name: '' })
-        .set('Accept', 'application/json');
+        .send({ 
+          name: 'Test Task',
+          due_date: 'invalid-date'
+        });
 
       expect(response.status).toBe(400);
-      expect(response.body).toHaveProperty('error');
-      expect(response.body.error).toBe('Item name is required');
+      expect(response.body.error).toBe('Invalid due date format');
+    });
+  });
+
+  describe('PUT /api/items/:id', () => {
+    let taskId;
+
+    beforeEach(async () => {
+      // Create a test task
+      const response = await request(app)
+        .post('/api/items')
+        .send({ name: 'Test Task' });
+      taskId = response.body.id;
+    });
+
+    it('should update task name', async () => {
+      const response = await request(app)
+        .put(`/api/items/${taskId}`)
+        .send({ name: 'Updated Task Name' });
+
+      expect(response.status).toBe(200);
+      expect(response.body.name).toBe('Updated Task Name');
+      expect(response.body.id).toBe(taskId);
+    });
+
+    it('should update multiple fields', async () => {
+      const updateData = {
+        name: 'Updated Task',
+        due_date: '2026-02-01T10:00:00.000Z',
+        status: 'completed',
+        priority: 1
+      };
+
+      const response = await request(app)
+        .put(`/api/items/${taskId}`)
+        .send(updateData);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject(updateData);
+      expect(response.body.updated_at).toBeTruthy();
+    });
+
+    it('should return 404 for non-existent task', async () => {
+      const response = await request(app)
+        .put('/api/items/999999')
+        .send({ name: 'Updated Task' });
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toBe('Item not found');
+    });
+
+    it('should return 400 for empty name update', async () => {
+      const response = await request(app)
+        .put(`/api/items/${taskId}`)
+        .send({ name: '' });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe('Item name cannot be empty');
     });
   });
 
   describe('DELETE /api/items/:id', () => {
-    it('should delete an existing item', async () => {
-      const item = await createItem('Item To Be Deleted');
+    let taskId;
 
-      const deleteResponse = await request(app).delete(`/api/items/${item.id}`);
-      expect(deleteResponse.status).toBe(200);
-      expect(deleteResponse.body).toEqual({ message: 'Item deleted successfully', id: item.id });
-
-      const deleteAgain = await request(app).delete(`/api/items/${item.id}`);
-      expect(deleteAgain.status).toBe(404);
-      expect(deleteAgain.body).toHaveProperty('error', 'Item not found');
+    beforeEach(async () => {
+      // Create a test task
+      const response = await request(app)
+        .post('/api/items')
+        .send({ name: 'Test Task' });
+      taskId = response.body.id;
     });
 
-    it('should return 404 when item does not exist', async () => {
-      const response = await request(app).delete('/api/items/999999');
+    it('should delete an existing task', async () => {
+      const response = await request(app)
+        .delete(`/api/items/${taskId}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.message).toBe('Item deleted successfully');
+
+      // Verify task is deleted
+      const getResponse = await request(app).get('/api/items');
+      expect(getResponse.body).toHaveLength(0);
+    });
+
+    it('should return 404 for non-existent task', async () => {
+      const response = await request(app)
+        .delete('/api/items/999999');
+
       expect(response.status).toBe(404);
-      expect(response.body).toHaveProperty('error', 'Item not found');
+      expect(response.body.error).toBe('Item not found');
     });
 
-    it('should return 400 for invalid id', async () => {
-      const response = await request(app).delete('/api/items/abc');
+    it('should return 400 for invalid task ID', async () => {
+      const response = await request(app)
+        .delete('/api/items/invalid-id');
+
       expect(response.status).toBe(400);
-      expect(response.body).toHaveProperty('error', 'Valid item ID is required');
+      expect(response.body.error).toBe('Valid item ID is required');
     });
   });
 });

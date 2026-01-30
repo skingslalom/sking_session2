@@ -1,17 +1,35 @@
 import React, { useState, useEffect } from 'react';
-import './App.css';
+import {
+  ThemeProvider,
+  CssBaseline,
+  AppBar,
+  Toolbar,
+  Typography,
+  Container,
+  Fab,
+  Snackbar,
+  Alert,
+  Box,
+} from '@mui/material';
+import { Add as AddIcon } from '@mui/icons-material';
+import theme from './theme';
+import TaskForm from './components/TaskForm';
+import TaskList from './components/TaskList';
 
 function App() {
-  const [data, setData] = useState([]);
+  const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [newItem, setNewItem] = useState('');
+  const [taskFormOpen, setTaskFormOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
   useEffect(() => {
-    fetchData();
+    fetchTasks();
   }, []);
 
-  const fetchData = async () => {
+  const fetchTasks = async () => {
     try {
       setLoading(true);
       const response = await fetch('/api/items');
@@ -19,108 +37,178 @@ function App() {
         throw new Error('Network response was not ok');
       }
       const result = await response.json();
-      setData(result);
+      setTasks(result);
       setError(null);
     } catch (err) {
-      setError('Failed to fetch data: ' + err.message);
-      console.error('Error fetching data:', err);
+      setError('Failed to fetch tasks: ' + err.message);
+      console.error('Error fetching tasks:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!newItem.trim()) return;
-
+  const handleCreateTask = async (taskData) => {
     try {
+      setSubmitting(true);
       const response = await fetch('/api/items', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ name: newItem }),
+        body: JSON.stringify(taskData),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to add item');
+        throw new Error('Failed to create task');
       }
 
-      const result = await response.json();
-      setData([...data, result]);
-      setNewItem('');
+      const newTask = await response.json();
+      setTasks(prevTasks => [...prevTasks, newTask]);
+      setTaskFormOpen(false);
+      setSnackbar({ open: true, message: 'Task created successfully!', severity: 'success' });
     } catch (err) {
-      setError('Error adding item: ' + err.message);
-      console.error('Error adding item:', err);
+      setSnackbar({ open: true, message: 'Error creating task: ' + err.message, severity: 'error' });
+      console.error('Error creating task:', err);
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const handleDelete = async (itemId) => {
+  const handleUpdateTask = async (taskData) => {
     try {
-      const response = await fetch(`/api/items/${itemId}`, {
+      setSubmitting(true);
+      const response = await fetch(`/api/items/${editingTask.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(taskData),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update task');
+      }
+
+      const updatedTask = await response.json();
+      setTasks(prevTasks => 
+        prevTasks.map(task => task.id === updatedTask.id ? updatedTask : task)
+      );
+      setTaskFormOpen(false);
+      setEditingTask(null);
+      setSnackbar({ open: true, message: 'Task updated successfully!', severity: 'success' });
+    } catch (err) {
+      setSnackbar({ open: true, message: 'Error updating task: ' + err.message, severity: 'error' });
+      console.error('Error updating task:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteTask = async (taskId) => {
+    if (!window.confirm('Are you sure you want to delete this task?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/items/${taskId}`, {
         method: 'DELETE',
       });
 
       if (!response.ok) {
-        throw new Error('Failed to delete item');
+        throw new Error('Failed to delete task');
       }
 
-      setData(data.filter(item => item.id !== itemId));
-      setError(null);
+      setTasks(prevTasks => prevTasks.filter(task => task.id !== taskId));
+      setSnackbar({ open: true, message: 'Task deleted successfully!', severity: 'success' });
     } catch (err) {
-      setError('Error deleting item: ' + err.message);
-      console.error('Error deleting item:', err);
+      setSnackbar({ open: true, message: 'Error deleting task: ' + err.message, severity: 'error' });
+      console.error('Error deleting task:', err);
     }
   };
 
+  const handleEditTask = (task) => {
+    setEditingTask(task);
+    setTaskFormOpen(true);
+  };
+
+  const handleFormSubmit = (taskData) => {
+    if (editingTask) {
+      handleUpdateTask(taskData);
+    } else {
+      handleCreateTask(taskData);
+    }
+  };
+
+  const handleCloseTaskForm = () => {
+    setTaskFormOpen(false);
+    setEditingTask(null);
+  };
+
+  const handleCloseSnackbar = () => {
+    setSnackbar(prev => ({ ...prev, open: false }));
+  };
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>To Do App</h1>
-        <p>Keep track of your tasks</p>
-      </header>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <Box sx={{ flexGrow: 1 }}>
+        <AppBar position="static" elevation={2}>
+          <Toolbar>
+            <Typography variant="h6" component="h1" sx={{ flexGrow: 1 }}>
+              Task Manager
+            </Typography>
+          </Toolbar>
+        </AppBar>
 
-      <main>
-        <section className="add-item-section">
-          <h2>Add New Item</h2>
-          <form onSubmit={handleSubmit}>
-            <input
-              type="text"
-              value={newItem}
-              onChange={(e) => setNewItem(e.target.value)}
-              placeholder="Enter item name"
-            />
-            <button type="submit">Add Item</button>
-          </form>
-        </section>
+        <Container maxWidth="md" sx={{ py: 4 }}>
+          <Typography variant="h4" component="h2" gutterBottom textAlign="center">
+            My Tasks
+          </Typography>
+          <Typography variant="subtitle1" color="text.secondary" textAlign="center" sx={{ mb: 4 }}>
+            Organize and track your daily tasks
+          </Typography>
 
-        <section className="items-section">
-          <h2>Items from Database</h2>
-          {loading && <p>Loading data...</p>}
-          {error && <p className="error">{error}</p>}
-          {!loading && !error && (
-            <ul>
-              {data.length > 0 ? (
-                data.map((item) => (
-                  <li key={item.id}>
-                    <span>{item.name}</span>
-                    <button 
-                      onClick={() => handleDelete(item.id)}
-                      className="delete-btn"
-                      type="button"
-                    >
-                      Delete
-                    </button>
-                  </li>
-                ))
-              ) : (
-                <p>No items found. Add some!</p>
-              )}
-            </ul>
-          )}
-        </section>
-      </main>
-    </div>
+          <TaskList
+            tasks={tasks}
+            loading={loading}
+            error={error}
+            onEditTask={handleEditTask}
+            onDeleteTask={handleDeleteTask}
+          />
+
+          <Fab
+            color="primary"
+            aria-label="Add new task"
+            sx={{
+              position: 'fixed',
+              bottom: 16,
+              right: 16,
+            }}
+            onClick={() => setTaskFormOpen(true)}
+          >
+            <AddIcon />
+          </Fab>
+
+          <TaskForm
+            open={taskFormOpen}
+            onClose={handleCloseTaskForm}
+            onSubmit={handleFormSubmit}
+            initialTask={editingTask}
+            loading={submitting}
+          />
+
+          <Snackbar
+            open={snackbar.open}
+            autoHideDuration={6000}
+            onClose={handleCloseSnackbar}
+          >
+            <Alert onClose={handleCloseSnackbar} severity={snackbar.severity}>
+              {snackbar.message}
+            </Alert>
+          </Snackbar>
+        </Container>
+      </Box>
+    </ThemeProvider>
   );
 }
 
