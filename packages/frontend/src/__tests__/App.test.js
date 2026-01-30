@@ -1,136 +1,140 @@
-import React, { act } from 'react';
+import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { rest } from 'msw';
-import { setupServer } from 'msw/node';
+import '@testing-library/jest-dom';
+
+// Mock Material-UI components
+jest.mock('@mui/material', () => ({
+  ThemeProvider: ({ children }) => <div data-testid="theme-provider">{children}</div>,
+  CssBaseline: () => <div data-testid="css-baseline" />,
+  AppBar: ({ children }) => <div data-testid="app-bar">{children}</div>,
+  Toolbar: ({ children }) => <div data-testid="toolbar">{children}</div>,
+  Typography: ({ children }) => <div>{children}</div>,
+  Container: ({ children }) => <div data-testid="container">{children}</div>,
+  Fab: ({ onClick, children }) => (
+    <button data-testid="fab" onClick={onClick} aria-label="Add new task">
+      {children}
+    </button>
+  ),
+  Snackbar: ({ open, children }) => open ? <div data-testid="snackbar">{children}</div> : null,
+  Alert: ({ children, severity }) => (
+    <div data-testid="alert" data-severity={severity}>
+      {children}
+    </div>
+  ),
+  Box: ({ children }) => <div data-testid="box">{children}</div>,
+}));
+
+jest.mock('@mui/icons-material', () => ({
+  Add: () => <span data-testid="add-icon">+</span>,
+}));
+
+// Mock our custom components
+jest.mock('../components/TaskForm', () => {
+  return function MockTaskForm({ open }) {
+    return open ? <div data-testid="task-form">Task Form</div> : null;
+  };
+});
+
+jest.mock('../components/TaskList', () => {
+  return function MockTaskList({ tasks, loading, error }) {
+    if (loading) return <div data-testid="loading">Loading...</div>;
+    if (error) return <div data-testid="error">{error}</div>;
+    if (tasks.length === 0) return <div data-testid="empty">No tasks found</div>;
+    return (
+      <div data-testid="task-list">
+        {tasks.map(task => (
+          <div key={task.id} data-testid="task-item">{task.name}</div>
+        ))}
+      </div>
+    );
+  };
+});
+
+jest.mock('../theme', () => ({}));
+
+// Mock fetch
+global.fetch = jest.fn();
+
 import App from '../App';
 
-// Mock server to intercept API requests
-const server = setupServer(
-  // GET /api/items handler
-  rest.get('/api/items', (req, res, ctx) => {
-    return res(
-      ctx.status(200),
-      ctx.json([
-        { id: 1, name: 'Test Item 1', created_at: '2023-01-01T00:00:00.000Z' },
-        { id: 2, name: 'Test Item 2', created_at: '2023-01-02T00:00:00.000Z' },
-      ])
-    );
-  }),
-  
-  // POST /api/items handler
-  rest.post('/api/items', (req, res, ctx) => {
-    const { name } = req.body;
-    
-    if (!name || name.trim() === '') {
-      return res(
-        ctx.status(400),
-        ctx.json({ error: 'Item name is required' })
-      );
-    }
-    
-    return res(
-      ctx.status(201),
-      ctx.json({
-        id: 3,
-        name,
-        created_at: new Date().toISOString(),
-      })
-    );
-  })
-);
-
-// Setup and teardown for the mock server
-beforeAll(() => server.listen());
-afterEach(() => server.resetHandlers());
-afterAll(() => server.close());
-
-describe('App Component', () => {
-  test('renders the header', async () => {
-    await act(async () => {
-      render(<App />);
-    });
-    expect(screen.getByText('React Frontend with Node Backend')).toBeInTheDocument();
-    expect(screen.getByText('Connected to in-memory database')).toBeInTheDocument();
+describe('App', () => {
+  beforeEach(() => {
+    fetch.mockClear();
   });
 
-  test('loads and displays items', async () => {
-    await act(async () => {
-      render(<App />);
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('renders app structure', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => []
     });
+
+    render(<App />);
     
-    // Initially shows loading state
-    expect(screen.getByText('Loading data...')).toBeInTheDocument();
+    expect(screen.getByTestId('theme-provider')).toBeInTheDocument();
+    expect(screen.getByTestId('app-bar')).toBeInTheDocument();
+    expect(screen.getByText('Task Manager')).toBeInTheDocument();
+    expect(screen.getByText('My Tasks')).toBeInTheDocument();
+    expect(screen.getByTestId('fab')).toBeInTheDocument();
+  });
+
+  it('shows loading state initially', () => {
+    fetch.mockImplementationOnce(() => 
+      new Promise(() => {}) // Never resolves
+    );
+
+    render(<App />);
     
-    // Wait for items to load
+    expect(screen.getByTestId('loading')).toBeInTheDocument();
+  });
+
+  it('shows empty state when no tasks', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => []
+    });
+
+    render(<App />);
+
     await waitFor(() => {
-      expect(screen.getByText('Test Item 1')).toBeInTheDocument();
-      expect(screen.getByText('Test Item 2')).toBeInTheDocument();
+      expect(screen.getByTestId('empty')).toBeInTheDocument();
     });
   });
 
-  test('adds a new item', async () => {
-    const user = userEvent.setup();
+  it('shows error state on fetch failure', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     
-    await act(async () => {
-      render(<App />);
-    });
-    
-    // Wait for items to load
+    fetch.mockRejectedValueOnce(new Error('Network error'));
+
+    render(<App />);
+
     await waitFor(() => {
-      expect(screen.queryByText('Loading data...')).not.toBeInTheDocument();
+      expect(screen.getByTestId('error')).toBeInTheDocument();
     });
-    
-    // Fill in the form and submit
-    const input = screen.getByPlaceholderText('Enter item name');
-    await act(async () => {
-      await user.type(input, 'New Test Item');
-    });
-    
-    const submitButton = screen.getByText('Add Item');
-    await act(async () => {
-      await user.click(submitButton);
-    });
-    
-    // Check that the new item appears
-    await waitFor(() => {
-      expect(screen.getByText('New Test Item')).toBeInTheDocument();
-    });
+
+    consoleSpy.mockRestore();
   });
 
-  test('handles API error', async () => {
-    // Override the default handler to simulate an error
-    server.use(
-      rest.get('/api/items', (req, res, ctx) => {
-        return res(ctx.status(500));
-      })
-    );
-    
-    await act(async () => {
-      render(<App />);
-    });
-    
-    // Wait for error message
-    await waitFor(() => {
-      expect(screen.getByText(/Failed to fetch data/)).toBeInTheDocument();
-    });
-  });
+  it('shows tasks when data is loaded', async () => {
+    const mockTasks = [
+      { id: 1, name: 'Task 1', status: 'pending' },
+      { id: 2, name: 'Task 2', status: 'completed' }
+    ];
 
-  test('shows empty state when no items', async () => {
-    // Override the default handler to return empty array
-    server.use(
-      rest.get('/api/items', (req, res, ctx) => {
-        return res(ctx.status(200), ctx.json([]));
-      })
-    );
-    
-    await act(async () => {
-      render(<App />);
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockTasks
     });
-    
-    // Wait for empty state message
+
+    render(<App />);
+
     await waitFor(() => {
-      expect(screen.getByText('No items found. Add some!')).toBeInTheDocument();
+      expect(screen.getByTestId('task-list')).toBeInTheDocument();
+      expect(screen.getByText('Task 1')).toBeInTheDocument();
+      expect(screen.getByText('Task 2')).toBeInTheDocument();
     });
   });
 });

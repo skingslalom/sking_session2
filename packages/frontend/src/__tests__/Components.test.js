@@ -3,95 +3,92 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 
-// Mock the entire TaskForm component that has date picker issues
-jest.mock('../components/TaskForm', () => {
-  return function MockTaskForm({ open, onClose, onSubmit, initialTask, loading }) {
-    if (!open) return null;
-    
-    const handleSubmit = (e) => {
-      e.preventDefault();
-      onSubmit({
-        name: initialTask?.name || 'Test Task',
-        due_date: null,
-        status: 'pending',
-        priority: 0
-      });
-    };
+// Mock Material-UI components
+jest.mock('@mui/material', () => ({
+  Card: ({ children }) => <div data-testid="card">{children}</div>,
+  CardContent: ({ children }) => <div data-testid="card-content">{children}</div>,
+  Typography: ({ children }) => <div>{children}</div>,
+  Chip: ({ label }) => <span data-testid="chip">{label}</span>,
+  IconButton: ({ onClick, children, disabled, ...props }) => (
+    <button onClick={onClick} disabled={disabled} {...props}>{children}</button>
+  ),
+  Box: ({ children }) => <div>{children}</div>,
+  Tooltip: ({ children }) => <div>{children}</div>,
+  Dialog: ({ open, children }) => open ? <div role="dialog">{children}</div> : null,
+  DialogTitle: ({ children }) => <h2>{children}</h2>,
+  DialogContent: ({ children }) => <div>{children}</div>,
+  DialogActions: ({ children }) => <div>{children}</div>,
+  TextField: ({ label, value, onChange, disabled, ...props }) => (
+    <input
+      aria-label={label}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+      {...props}
+    />
+  ),
+  Button: ({ onClick, children, disabled, type, ...props }) => (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      type={type}
+      {...props}
+    >
+      {children}
+    </button>
+  ),
+  FormControl: ({ children }) => <div>{children}</div>,
+  InputLabel: ({ children }) => <label>{children}</label>,
+  Select: ({ value, onChange, children, ...props }) => (
+    <select value={value} onChange={onChange} {...props}>
+      {children}
+    </select>
+  ),
+  MenuItem: ({ value, children }) => <option value={value}>{children}</option>,
+  Container: ({ children }) => <div data-testid="container">{children}</div>,
+  CircularProgress: () => <div role="progressbar">Loading...</div>,
+  Alert: ({ children, severity }) => <div role="alert" data-severity={severity}>{children}</div>,
+}));
 
-    return (
-      <div role="dialog" aria-labelledby="task-form-dialog-title">
-        <h2 id="task-form-dialog-title">
-          {initialTask ? 'Edit Task' : 'Add New Task'}
-        </h2>
-        <form onSubmit={handleSubmit}>
-          <input 
-            aria-label="Task name" 
-            defaultValue={initialTask?.name || ''}
-            disabled={loading}
-          />
-          <input aria-label="Due date" disabled={loading} />
-          <select aria-label="Task status" disabled={loading}>
-            <option value="pending">Pending</option>
-            <option value="in-progress">In Progress</option>
-            <option value="completed">Completed</option>
-          </select>
-          <select aria-label="Task priority" disabled={loading}>
-            <option value={0}>Low</option>
-            <option value={1}>Medium</option>
-            <option value={2}>High</option>
-          </select>
-          <button type="button" onClick={onClose} disabled={loading}>Cancel</button>
-          <button 
-            type="submit" 
-            disabled={loading}
-            aria-label={initialTask ? 'Update task' : 'Create task'}
-          >
-            {loading ? 'Saving...' : (initialTask ? 'Update' : 'Create')}
-          </button>
-        </form>
-      </div>
-    );
-  };
-});
+// Mock Material-UI icons
+jest.mock('@mui/icons-material', () => ({
+  Edit: () => <span>Edit</span>,
+  Delete: () => <span>Delete</span>,
+  Event: () => <span>Event</span>,
+  Flag: () => <span>Flag</span>,
+}));
 
-// Mock TaskItem with date-fns functions mocked
-jest.mock('../components/TaskItem', () => {
-  return function MockTaskItem({ task, onEdit, onDelete, loading }) {
-    const getStatusText = (status) => {
-      return status.charAt(0).toUpperCase() + status.slice(1).replace('-', ' ');
-    };
+// Mock date-fns functions
+jest.mock('date-fns', () => ({
+  format: jest.fn(() => 'Jan 30, 2026 10:00'),
+  isPast: jest.fn(() => false),
+  isToday: jest.fn(() => false),
+}));
 
-    return (
-      <div>
-        <h3>{task.name}</h3>
-        <span>{getStatusText(task.status)}</span>
-        {task.priority > 0 && <span>High Priority</span>}
-        {task.due_date && <span>Jan 30, 2026</span>}
-        <span>Created: Jan 30, 2026 10:00</span>
-        <button 
-          onClick={() => onEdit(task)}
-          disabled={loading}
-          aria-label={`Edit task: ${task.name}`}
-        >
-          Edit
-        </button>
-        <button 
-          onClick={() => onDelete(task.id)}
-          disabled={loading}
-          aria-label={`Delete task: ${task.name}`}
-        >
-          Delete
-        </button>
-      </div>
-    );
-  };
-});
+// Mock the date picker components
+jest.mock('@mui/x-date-pickers/DatePicker', () => ({
+  DatePicker: ({ label, value, onChange, slotProps }) => (
+    <input
+      aria-label={label}
+      value={value ? value.toISOString().split('T')[0] : ''}
+      onChange={(e) => onChange(e.target.value ? new Date(e.target.value) : null)}
+      type="date"
+      {...slotProps?.textField}
+    />
+  ),
+}));
 
-// Import the mocked components
-const TaskForm = require('../components/TaskForm').default;
-const TaskItem = require('../components/TaskItem').default;
+jest.mock('@mui/x-date-pickers/LocalizationProvider', () => ({
+  LocalizationProvider: ({ children }) => <div>{children}</div>,
+}));
 
-// Import TaskList normally since it doesn't use date-fns
+jest.mock('@mui/x-date-pickers/AdapterDateFns', () => ({
+  AdapterDateFns: jest.fn(),
+}));
+
+// Import components after mocking dependencies
+import TaskForm from '../components/TaskForm';
+import TaskItem from '../components/TaskItem';
 import TaskList from '../components/TaskList';
 
 describe('TaskItem', () => {
@@ -122,10 +119,13 @@ describe('TaskItem', () => {
     
     expect(screen.getByText('Test Task')).toBeInTheDocument();
     expect(screen.getByText('Pending')).toBeInTheDocument();
-    expect(screen.getByText(/Created: Jan 30, 2026/)).toBeInTheDocument();
   });
 
   it('shows due date when present', () => {
+    // Update the format mock to return a simpler test value for due dates  
+    const format = require('date-fns').format;
+    format.mockReturnValue('Feb 01, 2026');
+
     const taskWithDueDate = {
       ...mockTask,
       due_date: '2026-02-01T10:00:00.000Z'
@@ -133,7 +133,13 @@ describe('TaskItem', () => {
 
     render(<TaskItem {...mockProps} task={taskWithDueDate} />);
     
-    expect(screen.getByText(/Jan 30, 2026/)).toBeInTheDocument();
+    // Should have at least 2 chips (status + due date)
+    const chips = screen.getAllByTestId('chip');
+    expect(chips.length).toBeGreaterThanOrEqual(2);
+    
+    // Should contain the due date somewhere
+    const chipTexts = chips.map(chip => chip.textContent);
+    expect(chipTexts).toContain('Feb 01, 2026');
   });
 
   it('shows priority when greater than 0', () => {
@@ -195,7 +201,7 @@ describe('TaskForm', () => {
   it('renders form fields correctly', () => {
     render(<TaskForm {...mockProps} />);
     
-    expect(screen.getByLabelText('Task name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Task Name')).toBeInTheDocument();
     expect(screen.getByLabelText('Due date')).toBeInTheDocument();
     expect(screen.getByLabelText('Task status')).toBeInTheDocument();
     expect(screen.getByLabelText('Task priority')).toBeInTheDocument();
@@ -227,14 +233,20 @@ describe('TaskForm', () => {
     const user = userEvent.setup();
     render(<TaskForm {...mockProps} />);
     
+    const nameInput = screen.getByLabelText('Task Name');
+    await user.type(nameInput, 'New Task');
+    
     const submitButton = screen.getByLabelText('Create task');
     await user.click(submitButton);
     
-    expect(mockProps.onSubmit).toHaveBeenCalledWith({
-      name: 'Test Task',
-      due_date: null,
-      status: 'pending',
-      priority: 0
+    await waitFor(() => {
+      expect(mockProps.onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'New Task',
+          status: 'pending',
+          priority: 0
+        })
+      );
     });
   });
 
@@ -251,7 +263,7 @@ describe('TaskForm', () => {
   it('disables form when loading', () => {
     render(<TaskForm {...mockProps} loading={true} />);
     
-    const nameInput = screen.getByLabelText('Task name');
+    const nameInput = screen.getByLabelText('Task Name');
     const submitButton = screen.getByText('Saving...');
     
     expect(nameInput).toBeDisabled();
@@ -310,6 +322,7 @@ describe('TaskList', () => {
   it('shows error message when error exists', () => {
     render(<TaskList {...mockProps} error="Something went wrong" />);
     
+    expect(screen.getByRole('alert')).toBeInTheDocument();
     expect(screen.getByText('Something went wrong')).toBeInTheDocument();
   });
 
@@ -324,7 +337,6 @@ describe('TaskList', () => {
     render(<TaskList {...mockProps} />);
     
     // TaskItem components should receive the handlers
-    // This is tested indirectly through TaskItem tests
     expect(screen.getAllByLabelText(/Edit task:/)).toHaveLength(2);
     expect(screen.getAllByLabelText(/Delete task:/)).toHaveLength(2);
   });
